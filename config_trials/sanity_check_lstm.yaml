@@ -1,0 +1,246 @@
+# =========================
+# 实验基础配置
+# =========================
+experiment:
+  # 实验名称（会写入日志与输出目录标识）
+  name: sanity_check_lstm
+  # 运行设备：auto/cpu/cuda
+  device: auto
+
+# =========================
+# 卫星目标配置
+# =========================
+satellite:
+  # Select satellite_list_v1.txt or satellite_list_v2.txt
+  list_file: satellite_list_v1.txt
+
+# =========================
+# 数据相关配置
+# =========================
+data:
+  spacetrack:
+    username: your_spacetrack_username
+    password: your_spacetrack_password
+
+  # TLE 数据构建参数
+  tle:
+    # 下载起始日期（UTC，YYYY-MM-DD）
+    start_date: "2025-12-01"
+    # 下载结束日期（UTC，YYYY-MM-DD）
+    end_date: "2025-12-31"
+    # 样本允许的最大时间间隔（天）
+    max_dt_days: 3
+    orbit_samples_n: 2
+    delta_n_threshold: 0.003
+    # IQR 异常值过滤系数（<=0 表示关闭）
+    iqr_k: 1.5
+    # 跨星过滤指标（如 T_median）
+    iqr_metric: T_median
+    # 是否优先使用本地缓存，避免重复下载
+    skip_cached: true
+    # Space-Track 批量请求大小
+    batch_size: 200
+    # 请求间隔秒数（避免触发限流）
+    request_delay_seconds: 10
+
+  # 数据集划分参数
+  split:
+    # 验证集使用最近 N 天样本
+    val_days: 10
+    # DataLoader 工作进程数
+    num_workers: 4
+
+  # 小样本过滤参数
+  filter:
+    # 是否启用小样本过滤
+    enabled: true
+    # split 前单星最小样本数
+    min_sat_samples_before_split: 80
+    # 训练集单星最小样本数
+    min_train_samples: 64
+    # 验证集单星最小样本数
+    min_val_samples: 16
+    # 测试评估时单星最小样本数
+    min_test_samples_for_eval: 50
+
+# =========================
+# 聚类与卫星分组
+# =========================
+clustering:
+  # 聚类特征模式
+  feature_mode: t_error_stats      # t_error_stats或者orbital_alt_inc
+  # 聚类算法
+  method: kmeans
+  # 卫星组（簇）数量
+  n_clusters: 2
+  balance_by_samples: false
+  # 每簇目标负载容差（±比例）
+  balance_tolerance: 0.15
+  # 约束不可行时，每轮放宽容差步长
+  balance_relax_step: 0.05
+  # 最多放宽次数（0 表示不放宽）
+  balance_max_relax_steps: 3
+
+# =========================
+# 模型结构参数
+# =========================
+model:
+  type: lstm
+  # 模型公共参数（所有模型共享）
+  common:
+    # 输入特征维度（固定 19）
+    input_size: 19
+    # 输出维度（RTN 三轴）
+    output_size: 3
+    # 序列长度（滑窗长度）
+    sequence_length: 20
+    # 全局 dropout
+    dropout: 0.08
+
+  params_by_type:
+    lstm:
+      # LSTM 隐层维度
+      hidden_size: 80
+      # LSTM 层数
+      num_layers: 1
+      # 是否双向 LSTM
+      bidirectional: false
+      # 是否使用注意力池化
+      use_attention: false
+      # 注意力头数（需整除隐藏维）
+      num_heads: 1
+      # 注意力 dropout
+      attn_dropout: 0.1
+
+    transformer:
+      # Transformer 隐空间维度
+      d_model: 128
+      num_layers: 2
+      # 多头注意力头数
+      num_heads: 4
+      # 前馈网络隐藏层维度
+      ffn_dim: 512
+      # 注意力层 dropout
+      attn_dropout: 0.1
+      # 前馈网络 dropout
+      ffn_dropout: 0.1
+      # 序列池化方式：mean / cls
+      pooling: cls   # mean / cls
+
+    tcn:
+      channels: [128, 64, 32]
+      # 1D 卷积核大小（建议 >= 2）
+      kernel_size: 3
+      dilation_base: 2
+      # 是否启用残差连接
+      use_residual: true
+      # 是否使用因果卷积（仅看历史时刻）
+      causal: true
+      # 序列池化方式：last / mean
+      pooling: last   # last / mean
+
+# =========================
+# 训练参数
+# =========================
+training:
+  # 分组协同训练参数
+  collaborative:
+    # 协同迭代次数
+    num_rounds: 50
+    # 每次组内更新的 epoch 数
+    local_epochs: 1
+
+  # 优化器参数
+  optimizer:
+    # 优化器类型
+    name: adamw
+    # 初始学习率
+    lr: 0.002
+    # 权重衰减
+    weight_decay: 0.0
+
+  # 学习率调度参数
+  lr_schedule:
+    # 调度类型
+    type: cosine
+    # 最小学习率
+    min_lr: 5e-5
+    # warmup 轮数
+    warmup_rounds: 5
+    # warmup 起始倍率
+    warmup_start_factor: 0.05
+
+  # 训练批大小
+  batch_size: 128
+  # 梯度裁剪阈值
+  grad_clip: 0.5
+  loss_type: loss1
+  loss_delta: 0.1
+  # loss3 的近端约束系数
+  loss3_mu: 1.0e-20
+  loss_axis_weights: [1, 1, 1]
+
+  # 选模指标
+  model_selection:
+    metric: val_t_rms_km
+    # 可选: min / max
+    mode: min
+    # 监控指标最小改进阈值
+    min_delta: 0.0
+
+  # 早停策略
+  early_stopping:
+    # 是否启用早停
+    enabled: true
+    # 容忍无提升轮数
+    patience: 30
+    # 最小改进阈值
+    min_delta: 0.0001
+
+  # 验证频率
+  validation:
+    # 每隔多少轮执行一次验证、选模和早停
+    eval_every_rounds: 5
+
+# =========================
+# 输出与可视化
+# =========================
+outputs:
+  # 路径配置
+  paths:
+    # 原始数据目录
+    data_raw: data/raw
+    # 处理后数据目录
+    data_processed: data/processed
+    # 模型输出目录
+    models: outputs/models
+    # 图像输出目录
+    plots: outputs/plots
+    # 指标输出目录
+    metrics: outputs/metrics
+    # 聚类结果目录
+    clustering: outputs/clustering
+
+  # 保存开关
+  save:
+    # 是否保存图像
+    plots: false
+    # 是否保存聚类结果
+    clustering_results: true
+
+  # 可视化参数
+  visualization:
+    # 图像分辨率
+    dpi: 300
+    # 图像格式
+    format: png
+    # matplotlib 风格
+    style: seaborn-v0_8-darkgrid
+
+# =========================
+# 日志配置
+# =========================
+logging:
+  level: INFO
+  # 是否同时输出到终端
+  console: true
